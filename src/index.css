@@ -1,0 +1,118 @@
+/* src/index.css */
+
+:root {
+  /* Khai báo bảng màu Cam Đất */
+  --cam-dat-chinh: #B3541E;       /* Màu chủ đạo (Terracotta) */
+  --cam-dat-dam: #8F4317;         /* Màu khi hover chuột */
+  --cam-dat-nhat: #FFF8F0;        /* Màu nền nhạt */
+  --do-gach: #C0392B;             /* Thay thế màu đỏ tươi (Danger) */
+  --xanh-reu: #556B2F;            /* Thay thế màu xanh lá (Success) cho hợp tông đất */
+}
+
+body {
+  background-color: #Fdfcfb; /* Màu nền web hơi ngà nhẹ cho dịu mắt */
+  color: #333;
+}
+
+/* --- GHI ĐÈ MÀU PRIMARY (Màu Xanh dương cũ -> Cam Đất) --- */
+
+/* Nền và Chữ */
+.bg-primary {
+  background-color: var(--cam-dat-chinh) !important;
+}
+
+.text-primary {
+  color: var(--cam-dat-chinh) !important;
+}
+
+.border-primary {
+  border-color: var(--cam-dat-chinh) !important;
+}
+
+/* Nút bấm (Buttons) */
+.btn-primary {
+  background-color: var(--cam-dat-chinh) !important;
+  border-color: var(--cam-dat-chinh) !important;
+}
+
+.btn-primary:hover, .btn-primary:active, .btn-primary:focus {
+  background-color: var(--cam-dat-dam) !important;
+  border-color: var(--cam-dat-dam) !important;
+}
+
+.btn-outline-primary {
+  color: var(--cam-dat-chinh) !important;
+  border-color: var(--cam-dat-chinh) !important;
+}
+
+.btn-outline-primary:hover {
+  background-color: var(--cam-dat-chinh) !important;
+  color: white !important;
+}
+
+/* Các thành phần khác (Nav link, Spinner...) */
+.nav-pills .nav-link.active, .nav-pills .show > .nav-link {
+  background-color: var(--cam-dat-chinh) !important;
+}
+
+.page-item.active .page-link {
+  background-color: var(--cam-dat-chinh) !important;
+  border-color: var(--cam-dat-chinh) !important;
+}
+
+.spinner-border.text-primary {
+  color: var(--cam-dat-chinh) !important;
+}
+
+/* --- GHI ĐÈ MÀU SUCCESS (Xanh lá cũ -> Xanh Rêu cho hợp tông đất) --- */
+.bg-success {
+  background-color: var(--xanh-reu) !important;
+}
+.btn-success {
+  background-color: var(--xanh-reu) !important;
+  border-color: var(--xanh-reu) !important;
+}
+.btn-success:hover {
+  background-color: #3e4f20 !important;
+}
+.text-success {
+    color: var(--xanh-reu) !important;
+}
+
+/* --- GHI ĐÈ MÀU DANGER (Đỏ tươi cũ -> Đỏ Gạch) --- */
+.bg-danger {
+    background-color: var(--do-gach) !important;
+}
+.text-danger {
+    color: var(--do-gach) !important;
+}
+.btn-danger {
+    background-color: var(--do-gach) !important;
+    border-color: var(--do-gach) !important;
+}
+
+/* --- TÙY CHỈNH THÊM CHO CARD --- */
+.card-header.bg-primary {
+    background: linear-gradient(45deg, var(--cam-dat-chinh), #D35400) !important;
+}
+
+/* --- SỬA LỖI MÀU XANH TRONG MENU ADMIN --- */
+
+/* Ghi đè trạng thái Active của danh sách menu */
+.list-group-item.active {
+    background-color: var(--cam-dat-chinh) !important;
+    border-color: var(--cam-dat-chinh) !important;
+    color: white !important;
+}
+
+/* (Tùy chọn) Đổi màu khi di chuột vào các mục chưa chọn cho đẹp hơn */
+.list-group-item-action:hover, 
+.list-group-item-action:focus {
+    background-color: var(--cam-dat-nhat) !important; /* Màu nền nhạt */
+    color: var(--cam-dat-dam) !important;             /* Chữ màu đậm */
+}
+
+/* Đổi màu icon trong menu khi active */
+.list-group-item.active i {
+    color: white !important;
+}
