@@ -146,7 +146,7 @@ const TaxOfficerDashboard = () => {
             <div className="bg-white shadow-sm p-3 mb-4 border-bottom">
                 <div className="container d-flex justify-content-between align-items-center">
                     <h4 className="text-primary mb-0 d-flex align-items-center">
-                        <i className="bi bi-person-badge-fill me-2 fs-3"></i>
+                        <img src="https://i.pinimg.com/736x/be/c5/3c/bec53c7b30f46d9ad2cecdb48c5e1e1f.jpg" alt="Logo" className="me-2 rounded" style={{ height: '45px' }} />
                         Hệ Thống Thuế - Phân Hệ Cán Bộ
                     </h4>
                     <div className="d-flex align-items-center">
