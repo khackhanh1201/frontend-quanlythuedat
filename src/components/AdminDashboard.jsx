@@ -1,290 +1,521 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
 
 const AdminDashboard = () => {
-    const navigate = useNavigate();
-    
-    // Lấy thông tin Admin đang đăng nhập
     const user = JSON.parse(localStorage.getItem('user')) || {};
-
-    // State quản lý Tab hiển thị
-    const [activeTab, setActiveTab] = useState('banggia'); // 'banggia' | 'canbo' | 'import' | 'system'
+    const [activeTab, setActiveTab] = useState('dashboard');
+    const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState({ text: '', type: '' });
 
-    // --- STATE 1: BẢNG GIÁ ĐẤT ---
-    const [giaDat, setGiaDat] = useState({ 
-        loaiDat: 'ODT', 
-        donGiaM2: 0, 
-        thueSuat: 0.0005,
-        khuVuc: 'KV1', // Giả sử có thêm trường khu vực, nếu không có bạn có thể bỏ
-        namApDung: new Date().getFullYear()
+    // --- STATE 1: DASHBOARD THỐNG KÊ ---
+    const [stats, setStats] = useState({
+        tongSoHoSo: 0, tongThuThue: 0, tongNoThue: 0,
+        soHoSoChoDuyet: 0, soHoSoDaDuyet: 0, soHoSoGianLan: 0
+    });
+    const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+
+    // --- STATE 2: QUẢN LÝ NGƯỜI DÙNG ---
+    const [users, setUsers] = useState([]);
+    const [userKeyword, setUserKeyword] = useState('');
+    const [userRoleFilter, setUserRoleFilter] = useState(''); 
+    
+    // Modal tạo nhân viên
+    const [showCreateStaffModal, setShowCreateStaffModal] = useState(false);
+    const [newStaff, setNewStaff] = useState({ 
+        hoTen: '', tenDangNhap: '', matKhau: '', maVaiTro: 2, soDinhDanh: '' 
     });
 
-    // --- STATE 2: TẠO CÁN BỘ ---
-    const [canBo, setCanBo] = useState({ tenDangNhap: '', hoTen: '', cccd: '' });
+    // --- STATE 3: QUẢN LÝ ĐẤT ĐAI ---
+    const [landPrice, setLandPrice] = useState({ 
+        maKhuVuc: 1, maLoaiDat: 1, donGiaM2: '', trangThai: 'Hiệu lực',
+        // 3 trường mới
+        ngayBanHanh: '',       
+        ngayHetHieuLuc: '',    
+        soCongVanQuyDinh: ''   
+    });
+    const [importFile, setImportFile] = useState(null);
+    
+    // [MỚI] State danh sách đất và ID xóa nhanh
+    const [lands, setLands] = useState([]);
+    const [quickDeleteId, setQuickDeleteId] = useState('');
 
-    // --- STATE 3: QUẢN LÝ ID (Xóa/Khóa) ---
-    const [targetId, setTargetId] = useState('');
-
-    // --- HÀM CHUNG ---
+    // HELPER FORMAT
+    const formatCurrency = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
     const showMessage = (text, type = 'success') => {
         setMessage({ text, type });
-        setTimeout(() => setMessage({ text: '', type: '' }), 5000);
+        setTimeout(() => setMessage({ text: '', type: '' }), 4000);
     };
 
-    const handleLogout = () => {
-        if(window.confirm('Bạn muốn đăng xuất khỏi trang quản trị?')) {
-            localStorage.removeItem('user');
-            navigate('/login');
-        }
+    // =================================================
+    // 1. API THỐNG KÊ
+    // =================================================
+    const fetchStats = async () => {
+        try {
+            const res = await axiosClient.get('/admin/thong-ke', { params: { nam: filterYear } });
+            setStats(res.data);
+        } catch (err) { console.error("Lỗi lấy thống kê:", err); }
     };
 
-    // --- XỬ LÝ: CẬP NHẬT GIÁ ĐẤT ---
-    const handleUpdateGiaDat = async (e) => {
+    // =================================================
+    // 2. API NGƯỜI DÙNG
+    // =================================================
+    const fetchUsers = async () => {
+        setLoading(true);
+        try {
+            const params = {};
+            if (userKeyword) params.keyword = userKeyword;
+            if (userRoleFilter) params.vaiTro = userRoleFilter;
+            const res = await axiosClient.get('/admin/nguoi-dung', { params });
+            setUsers(res.data);
+        } catch (err) {
+            console.error(err);
+            showMessage('Lỗi tải danh sách người dùng', 'danger');
+        } finally { setLoading(false); }
+    };
+
+    const handleCreateStaff = async (e) => {
         e.preventDefault();
         try {
-            await axiosClient.post('/admin/banggia', giaDat);
-            showMessage('Cập nhật bảng giá đất thành công!');
+            const payload = { ...newStaff, maVaiTro: parseInt(newStaff.maVaiTro) };
+            await axiosClient.post('/admin/tao-nhan-vien', payload);
+            showMessage('Tạo nhân viên thành công!', 'success');
+            setShowCreateStaffModal(false);
+            setNewStaff({ hoTen: '', tenDangNhap: '', matKhau: '', maVaiTro: 2, soDinhDanh: '' });
+            fetchUsers();
         } catch (err) {
-            showMessage(err.response?.data || 'Lỗi cập nhật giá đất', 'danger');
+            alert(err.response?.data?.message || err.response?.data || "Lỗi tạo nhân viên");
         }
     };
 
-    // --- XỬ LÝ: TẠO CÁN BỘ ---
-    const handleCreateCanBo = async (e) => {
+    const handleUserAction = async (maNguoiDung, action) => {
+        if (!window.confirm(`Bạn có chắc chắn muốn thực hiện thao tác này?`)) return;
+        try {
+            let textAction = '';
+            if (action === 'APPROVE') {
+                await axiosClient.put(`/admin/nguoi-dung/${maNguoiDung}/phe-duyet`);
+                setUsers(prev => prev.map(u => u.maNguoiDung === maNguoiDung ? { ...u, trangThai: true } : u));
+                textAction = 'Phê duyệt';
+            }
+            if (action === 'LOCK') {
+                await axiosClient.put(`/admin/nguoi-dung/${maNguoiDung}/khoa`);
+                setUsers(prev => prev.map(u => u.maNguoiDung === maNguoiDung ? { ...u, trangThai: false } : u));
+                textAction = 'Khóa tài khoản';
+            }
+            if (action === 'DELETE') {
+                await axiosClient.delete(`/admin/nguoi-dung/${maNguoiDung}`);
+                setUsers(prev => prev.filter(u => u.maNguoiDung !== maNguoiDung));
+                textAction = 'Xóa';
+            }
+            showMessage(`Thao tác ${textAction} thành công!`, 'success');
+        } catch (err) {
+            showMessage(err.response?.data?.message || "Có lỗi xảy ra!", 'danger');
+        }
+    };
+
+    // =================================================
+    // 3. API QUẢN LÝ ĐẤT ĐAI
+    // =================================================
+    
+    // [MỚI] Lấy danh sách thửa đất
+    const fetchLands = async () => {
+        try {
+            // Giả định API Backend là GET /thua-dat
+            const res = await axiosClient.get('/thua-dat'); 
+            setLands(res.data);
+        } catch (err) {
+            console.error("Lỗi tải danh sách đất:", err);
+        }
+    };
+
+    // [MỚI] Xóa thửa đất theo ID (Backend: @DeleteMapping("/thua-dat/{id}"))
+    const handleDeleteLand = async (id) => {
+        if (!id) return alert("Vui lòng nhập ID thửa đất!");
+        if (!window.confirm(`CẢNH BÁO: Bạn có chắc chắn muốn xóa thửa đất ID: ${id}?\nDữ liệu không thể khôi phục!`)) return;
+
+        try {
+            await axiosClient.delete(`/thua-dat/${id}`);
+            
+            showMessage(`Đã xóa thành công thửa đất ID ${id}`, "success");
+            
+            // Cập nhật lại giao diện (Xóa khỏi danh sách và clear ô nhập nhanh)
+            setLands(prev => prev.filter(item => item.maThuaDat != id));
+            setQuickDeleteId(''); 
+        } catch (err) {
+            // Hiển thị lỗi từ backend (ví dụ: ràng buộc khóa ngoại)
+            alert(err.response?.data || "Không thể xóa thửa đất (Có thể đang có hồ sơ liên quan).");
+        }
+    };
+
+    const handleUpdateLandPrice = async (e) => {
         e.preventDefault();
         try {
-            await axiosClient.post('/admin/tao-can-bo', canBo);
-            showMessage('Tạo tài khoản cán bộ thành công! Mật khẩu mặc định: 123456');
-            setCanBo({ tenDangNhap: '', hoTen: '', cccd: '' }); // Reset form
+            const payload = {
+                maKhuVuc: parseInt(landPrice.maKhuVuc),
+                maLoaiDat: parseInt(landPrice.maLoaiDat),
+                donGiaM2: parseFloat(landPrice.donGiaM2),
+                trangThai: landPrice.trangThai,
+                ngayBanHanh: landPrice.ngayBanHanh,
+                ngayHetHieuLuc: landPrice.ngayHetHieuLuc || null,
+                soCongVanQuyDinh: landPrice.soCongVanQuyDinh
+            };
+            await axiosClient.post('/admin/banggia', payload);
+            showMessage('Cập nhật giá đất thành công!', 'success');
         } catch (err) {
-            showMessage(err.response?.data || 'Lỗi tạo cán bộ', 'danger');
+            alert(err.response?.data?.message || "Lỗi cập nhật giá");
         }
     };
 
-    // --- XỬ LÝ: IMPORT EXCEL ---
     const handleImportExcel = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const formData = new FormData();
-        formData.append('file', file);
-
+        e.preventDefault();
+        if (!importFile) return alert("Vui lòng chọn file Excel!");
         try {
+            const formData = new FormData();
+            formData.append("file", importFile);
             const res = await axiosClient.post('/admin/import-dat-dai', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
-            showMessage(res.data);
-            e.target.value = null; // Reset input file
+            showMessage(res.data || "Import dữ liệu thành công!", 'success');
+            setImportFile(null);
+            fetchLands(); // Tải lại danh sách sau khi import
         } catch (err) {
-            showMessage(err.response?.data || 'Lỗi import file', 'danger');
+            alert(err.response?.data?.message || "Lỗi import file");
         }
     };
 
-    // --- XỬ LÝ: KHÓA / XÓA ---
-    const handleSystemAction = async (action) => {
-        if (!targetId) return showMessage('Vui lòng nhập ID đối tượng', 'warning');
-        
-        // Confirm trước khi xóa
-        if (action.includes('delete') && !window.confirm('Hành động này không thể hoàn tác. Bạn chắc chắn chứ?')) {
-            return;
-        }
+    // =================================================
+    // EFFECT & RENDER
+    // =================================================
+    useEffect(() => {
+        if (activeTab === 'dashboard') fetchStats();
+        if (activeTab === 'users') fetchUsers();
+        if (activeTab === 'land') fetchLands(); // [MỚI] Tải danh sách đất khi vào tab này
+    }, [activeTab, filterYear]);
 
-        try {
-            let res;
-            if (action === 'deleteUser') {
-                res = await axiosClient.delete(`/admin/nguoi-dung/${targetId}`);
-            } else if (action === 'deleteLand') {
-                res = await axiosClient.delete(`/admin/thua-dat/${targetId}`);
-            } else if (action === 'lockUser') {
-                res = await axiosClient.put(`/admin/nguoi-dung/${targetId}/khoa`);
-            }
-            showMessage(res.data);
-            setTargetId('');
-        } catch (err) {
-            showMessage(err.response?.data || 'Thao tác thất bại', 'danger');
-        }
+    const handleLogout = () => {
+        localStorage.removeItem('user');
+        localStorage.removeItem('token');
+        window.location.href = '/login';
     };
 
     return (
-        <div className="container-fluid bg-light min-vh-100 py-3">
-            <div className="container">
-                {/* Header Admin */}
-                <div className="d-flex justify-content-between align-items-center mb-4 bg-white p-3 shadow-sm rounded">
-                    <div>
-                        <h4 className="text-danger fw-bold mb-0 d-flex align-items-center">
-                            <img 
-                                src="https://i.pinimg.com/736x/be/c5/3c/bec53c7b30f46d9ad2cecdb48c5e1e1f.jpg" 
-                                alt="Logo" 
-                                className="me-3 rounded"
-                                style={{ height: '55px' }}
-                            />
-                            <span>Trang Quản Trị Hệ Thống (Admin)</span>
-                        </h4>
+        <div className="min-vh-100 bg-light">
+            {/* Navbar */}
+            <nav className="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+                <div className="container-fluid px-4">
+                    <span className="navbar-brand fw-bold text-uppercase d-flex align-items-center">
+                        <img src="https://i.pinimg.com/736x/be/c5/3c/bec53c7b30f46d9ad2cecdb48c5e1e1f.jpg" alt="Logo" className="me-2 rounded" style={{ height: '45px' }} />
+                        HỆ THỐNG QUẢN TRỊ
+                    </span>
+                    <div className="d-flex align-items-center text-white gap-3">
+                        <span className="text-warning fw-bold">ADMIN: {user.hoTen}</span>
+                        <button onClick={handleLogout} className="btn btn-outline-light btn-sm">Thoát</button>
                     </div>
-                    <div className="d-flex align-items-center gap-3">
-                        <div className="text-end">
-                            <div className="fw-bold">{user.hoTen || 'Administrator'}</div>
-                            <small className="text-muted">Role: {user.vaiTro}</small>
-                        </div>
-                        <button className="btn btn-outline-danger btn-sm" onClick={handleLogout}>
-                            <i className="bi bi-box-arrow-right"></i>
+                </div>
+            </nav>
+
+            <div className="d-flex" style={{ minHeight: 'calc(100vh - 56px)' }}>
+                {/* Sidebar */}
+                <div className="bg-white border-end" style={{ width: '250px', minWidth: '250px' }}>
+                    <div className="list-group list-group-flush mt-3">
+                        <button className={`list-group-item list-group-item-action border-0 py-3 ${activeTab === 'dashboard' ? 'active bg-dark' : ''}`} onClick={() => setActiveTab('dashboard')}>
+                            <i className="bi bi-speedometer2 me-2"></i> Tổng Quan
+                        </button>
+                        <button className={`list-group-item list-group-item-action border-0 py-3 ${activeTab === 'users' ? 'active bg-dark' : ''}`} onClick={() => setActiveTab('users')}>
+                            <i className="bi bi-people me-2"></i> Quản Lý Người Dùng
+                        </button>
+                        <button className={`list-group-item list-group-item-action border-0 py-3 ${activeTab === 'land' ? 'active bg-dark' : ''}`} onClick={() => setActiveTab('land')}>
+                            <i className="bi bi-map me-2"></i> Dữ Liệu Đất Đai
                         </button>
                     </div>
                 </div>
 
-                {/* Thông báo Global */}
-                {message.text && (
-                    <div className={`alert alert-${message.type} alert-dismissible fade show shadow-sm`} role="alert">
-                        {message.text}
-                        <button type="button" className="btn-close" onClick={() => setMessage({ text: '', type: '' })}></button>
-                    </div>
-                )}
-
-                <div className="row">
-                    {/* MENU BÊN TRÁI */}
-                    <div className="col-md-3 mb-3">
-                        <div className="list-group shadow-sm">
-                            <button 
-                                className={`list-group-item list-group-item-action py-3 ${activeTab === 'banggia' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('banggia')}
-                            >
-                                <i className="bi bi-currency-dollar me-2"></i> Cấu Hình Giá Đất
-                            </button>
-                            <button 
-                                className={`list-group-item list-group-item-action py-3 ${activeTab === 'canbo' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('canbo')}
-                            >
-                                <i className="bi bi-person-plus-fill me-2"></i> Tạo Cán Bộ Mới
-                            </button>
-                            <button 
-                                className={`list-group-item list-group-item-action py-3 ${activeTab === 'import' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('import')}
-                            >
-                                <i className="bi bi-file-earmark-spreadsheet me-2"></i> Import Dữ Liệu
-                            </button>
-                            <button 
-                                className={`list-group-item list-group-item-action py-3 ${activeTab === 'system' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('system')}
-                            >
-                                <i className="bi bi-shield-lock me-2"></i> Quản Lý Tài Khoản
-                            </button>
+                {/* Main Content */}
+                <div className="flex-grow-1 p-4">
+                    {message.text && (
+                        <div className={`alert alert-${message.type} alert-dismissible fade show shadow`} 
+                            role="alert" style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 9999, minWidth: '300px' }}>
+                            <i className={`bi ${message.type === 'success' ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'} me-2`}></i>
+                            <strong>{message.text}</strong>
+                            <button type="button" className="btn-close" onClick={() => setMessage({ text: '', type: '' })}></button>
                         </div>
-                    </div>
+                    )}
 
-                    {/* NỘI DUNG BÊN PHẢI */}
-                    <div className="col-md-9">
-                        <div className="card shadow-sm border-0 h-100">
-                            <div className="card-body p-4">
-                                
-                                {/* TAB 1: BẢNG GIÁ ĐẤT */}
-                                {activeTab === 'banggia' && (
-                                    <form onSubmit={handleUpdateGiaDat}>
-                                        <h5 className="text-primary border-bottom pb-2 mb-3">Cập Nhật Bảng Giá Đất</h5>
-                                        <div className="row mb-3">
-                                            <div className="col-md-6">
-                                                <label className="form-label">Loại Đất</label>
-                                                <select className="form-select" value={giaDat.loaiDat} onChange={(e) => setGiaDat({...giaDat, loaiDat: e.target.value})}>
-                                                    <option value="ODT">ODT - Đất ở đô thị</option>
-                                                    <option value="ONT">ONT - Đất ở nông thôn</option>
-                                                    <option value="CLN">CLN - Cây lâu năm</option>
-                                                    <option value="LUA">LUA - Đất lúa</option>
-                                                </select>
-                                            </div>
-                                            <div className="col-md-6">
-                                                <label className="form-label">Năm áp dụng</label>
-                                                <input type="number" className="form-control" value={giaDat.namApDung} onChange={(e) => setGiaDat({...giaDat, namApDung: e.target.value})} />
-                                            </div>
-                                        </div>
-                                        <div className="mb-3">
-                                            <label className="form-label">Đơn giá quy định (VNĐ/m²)</label>
-                                            <input type="number" className="form-control" value={giaDat.donGiaM2} onChange={(e) => setGiaDat({...giaDat, donGiaM2: e.target.value})} required />
-                                            <div className="form-text">Giá này sẽ được dùng để tính thuế cho toàn bộ hệ thống.</div>
-                                        </div>
-                                        <div className="mb-3">
-                                            <label className="form-label">Thuế suất (Dạng số thập phân)</label>
-                                            <input type="number" step="0.0001" className="form-control" value={giaDat.thueSuat} onChange={(e) => setGiaDat({...giaDat, thueSuat: e.target.value})} required />
-                                            <div className="form-text">Ví dụ: 0.05% nhập là 0.0005</div>
-                                        </div>
-                                        <button type="submit" className="btn btn-primary"><i className="bi bi-save me-2"></i>Cập nhật</button>
-                                    </form>
-                                )}
-
-                                {/* TAB 2: TẠO CÁN BỘ */}
-                                {activeTab === 'canbo' && (
-                                    <form onSubmit={handleCreateCanBo}>
-                                        <h5 className="text-primary border-bottom pb-2 mb-3">Cấp Tài Khoản Cán Bộ Thuế</h5>
-                                        <div className="alert alert-info py-2">
-                                            <small><i className="bi bi-info-circle me-1"></i> Mật khẩu mặc định sẽ là <b>123456</b></small>
-                                        </div>
-                                        <div className="mb-3">
-                                            <label className="form-label">Tên đăng nhập (Username)</label>
-                                            <input type="text" className="form-control" value={canBo.tenDangNhap} onChange={(e) => setCanBo({...canBo, tenDangNhap: e.target.value})} required />
-                                        </div>
-                                        <div className="mb-3">
-                                            <label className="form-label">Họ và Tên Cán Bộ</label>
-                                            <input type="text" className="form-control" value={canBo.hoTen} onChange={(e) => setCanBo({...canBo, hoTen: e.target.value})} required />
-                                        </div>
-                                        <div className="mb-3">
-                                            <label className="form-label">Số CCCD / Mã định danh</label>
-                                            <input type="text" className="form-control" value={canBo.cccd} onChange={(e) => setCanBo({...canBo, cccd: e.target.value})} required />
-                                        </div>
-                                        <button type="submit" className="btn btn-success"><i className="bi bi-person-plus me-2"></i>Tạo tài khoản</button>
-                                    </form>
-                                )}
-
-                                {/* TAB 3: IMPORT EXCEL */}
-                                {activeTab === 'import' && (
-                                    <div>
-                                        <h5 className="text-primary border-bottom pb-2 mb-3">Import Dữ Liệu Đất Đai</h5>
-                                        <div className="mb-4 text-center py-4 border rounded bg-light">
-                                            <i className="bi bi-file-earmark-excel text-success display-4"></i>
-                                            <p className="mt-2 text-muted">Chọn file Excel (.xlsx, .xls) chứa danh sách thửa đất</p>
-                                            <input type="file" className="form-control w-50 mx-auto" accept=".xlsx, .xls" onChange={handleImportExcel} />
-                                        </div>
-                                        <div className="alert alert-warning">
-                                            <strong>Lưu ý:</strong> File Excel cần đúng định dạng mẫu (Số tờ, Số thửa, Diện tích, Chủ sở hữu...).
+                    {/* --- TAB 1: DASHBOARD --- */}
+                    {activeTab === 'dashboard' && (
+                        <div>
+                             <div className="d-flex justify-content-between align-items-center mb-4">
+                                <h4 className="fw-bold text-dark">Thống Kê Tổng Quan</h4>
+                                <select className="form-select w-auto" value={filterYear} onChange={(e) => setFilterYear(e.target.value)}>
+                                    <option value="2024">Năm 2024</option>
+                                    <option value="2025">Năm 2025</option>
+                                </select>
+                            </div>
+                            <div className="row g-4 mb-4">
+                                <div className="col-md-4">
+                                    <div className="card text-white bg-success h-100 shadow-sm">
+                                        <div className="card-body">
+                                            <h6 className="card-title text-uppercase opacity-75">Tổng Thu Thuế</h6>
+                                            <h3 className="fw-bold">{formatCurrency(stats.tongThuThue)}</h3>
                                         </div>
                                     </div>
-                                )}
-
-                                {/* TAB 4: QUẢN LÝ HỆ THỐNG */}
-                                {activeTab === 'system' && (
-                                    <div>
-                                        <h5 className="text-danger border-bottom pb-2 mb-3">Vùng Nguy Hiểm (Admin Zone)</h5>
-                                        <div className="mb-4">
-                                            <label className="form-label fw-bold">Nhập ID đối tượng (User ID hoặc Land ID):</label>
-                                            <input type="number" className="form-control form-control-lg" placeholder="Nhập ID..." value={targetId} onChange={(e) => setTargetId(e.target.value)} />
-                                        </div>
-                                        
-                                        <div className="row g-3">
-                                            <div className="col-md-4">
-                                                <button className="btn btn-warning w-100 py-3" onClick={() => handleSystemAction('lockUser')}>
-                                                    <div className="fs-4"><i className="bi bi-lock-fill"></i></div>
-                                                    <div>Khóa Tài Khoản</div>
-                                                </button>
-                                            </div>
-                                            <div className="col-md-4">
-                                                <button className="btn btn-danger w-100 py-3" onClick={() => handleSystemAction('deleteUser')}>
-                                                    <div className="fs-4"><i className="bi bi-person-x-fill"></i></div>
-                                                    <div>Xóa Người Dùng</div>
-                                                </button>
-                                            </div>
-                                            <div className="col-md-4">
-                                                <button className="btn btn-outline-danger w-100 py-3" onClick={() => handleSystemAction('deleteLand')}>
-                                                    <div className="fs-4"><i className="bi bi-house-x-fill"></i></div>
-                                                    <div>Xóa Thửa Đất</div>
-                                                </button>
-                                            </div>
+                                </div>
+                                <div className="col-md-4">
+                                    <div className="card text-white bg-danger h-100 shadow-sm">
+                                        <div className="card-body">
+                                            <h6 className="card-title text-uppercase opacity-75">Nợ Thuế</h6>
+                                            <h3 className="fw-bold">{formatCurrency(stats.tongNoThue)}</h3>
                                         </div>
                                     </div>
-                                )}
+                                </div>
+                                <div className="col-md-4">
+                                    <div className="card text-white bg-primary h-100 shadow-sm">
+                                        <div className="card-body">
+                                            <h6 className="card-title text-uppercase opacity-75">Tổng Hồ Sơ</h6>
+                                            <h3 className="fw-bold">{stats.tongSoHoSo}</h3>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="row g-4">
+                                <div className="col-md-6">
+                                    <div className="card shadow-sm border-0 h-100">
+                                        <div className="card-header bg-white fw-bold">Trạng Thái Hồ Sơ</div>
+                                        <div className="card-body">
+                                            <ul className="list-group list-group-flush">
+                                                <li className="list-group-item d-flex justify-content-between align-items-center">
+                                                    Chờ duyệt <span className="badge bg-warning text-dark rounded-pill">{stats.soHoSoChoDuyet}</span>
+                                                </li>
+                                                <li className="list-group-item d-flex justify-content-between align-items-center">
+                                                    Đã duyệt <span className="badge bg-success rounded-pill">{stats.soHoSoDaDuyet}</span>
+                                                </li>
+                                                <li className="list-group-item d-flex justify-content-between align-items-center text-danger fw-bold">
+                                                    Phát hiện gian lận <span className="badge bg-danger rounded-pill">{stats.soHoSoGianLan}</span>
+                                                </li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- TAB 2: QUẢN LÝ USER --- */}
+                    {activeTab === 'users' && (
+                        <div>
+                            <div className="d-flex justify-content-between align-items-center mb-3">
+                                <h4 className="fw-bold">Danh Sách Người Dùng</h4>
+                                <button className="btn btn-primary" onClick={() => setShowCreateStaffModal(true)}>
+                                    <i className="bi bi-person-plus-fill me-2"></i> Thêm Cán Bộ
+                                </button>
+                            </div>
+                            <div className="row g-2 mb-3">
+                                <div className="col-md-3">
+                                    <select className="form-select" value={userRoleFilter} onChange={(e) => setUserRoleFilter(e.target.value)}>
+                                        <option value="">-- Tất cả vai trò --</option>
+                                        <option value="CHU_DAT">Chủ đất (Dân)</option>
+                                        <option value="CAN_BO">Cán bộ thuế</option>
+                                    </select>
+                                </div>
+                                <div className="col-md-7">
+                                    <input type="text" className="form-control" placeholder="Tìm tên hoặc số định danh..." 
+                                        value={userKeyword} onChange={(e) => setUserKeyword(e.target.value)}
+                                    />
+                                </div>
+                                <div className="col-md-2">
+                                    <button className="btn btn-outline-secondary w-100" onClick={fetchUsers}>Tìm Kiếm</button>
+                                </div>
+                            </div>
+                            <div className="card shadow-sm border-0">
+                                <div className="table-responsive">
+                                    <table className="table table-hover align-middle mb-0">
+                                        <thead className="bg-light">
+                                            <tr>
+                                                <th>ID</th>
+                                                <th>Thông Tin</th>
+                                                <th>CCCD</th>
+                                                <th>Vai Trò</th>
+                                                <th>Trạng Thái</th>
+                                                <th className="text-end">Hành Động</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {users.map(u => (
+                                                <tr key={u.maNguoiDung}>
+                                                    <td>#{u.maNguoiDung}</td>
+                                                    <td>
+                                                        <div className="fw-bold">{u.hoTen}</div>
+                                                        <small className="text-muted">{u.tenDangNhap}</small>
+                                                    </td>
+                                                    <td>{u.soDinhDanh}</td>
+                                                    <td><span className="badge bg-info text-dark">{u.getVaiTro || u.vaiTro}</span></td>
+                                                    <td>{u.trangThai ? <span className="badge bg-success">Hoạt động</span> : <span className="badge bg-warning text-dark">Chờ duyệt / Khóa</span>}</td>
+                                                    <td className="text-end">
+                                                        {!u.trangThai && <button className="btn btn-sm btn-success me-1" onClick={() => handleUserAction(u.maNguoiDung, 'APPROVE')} title="Phê duyệt"><i className="bi bi-check-lg"></i></button>}
+                                                        {u.trangThai && <button className="btn btn-sm btn-warning me-1" onClick={() => handleUserAction(u.maNguoiDung, 'LOCK')} title="Khóa tài khoản"><i className="bi bi-lock-fill"></i></button>}
+                                                        <button className="btn btn-sm btn-danger" onClick={() => handleUserAction(u.maNguoiDung, 'DELETE')} title="Xóa người dùng"><i className="bi bi-trash-fill"></i></button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- TAB 3: DỮ LIỆU ĐẤT ĐAI --- */}
+                    {activeTab === 'land' && (
+                        <div>
+                            <h4 className="fw-bold mb-4">Cấu Hình & Dữ Liệu Đất Đai</h4>
+                            
+                            {/* [MỚI] PHẦN XÓA NHANH BẰNG ID */}
+                            <div className="card shadow-sm border-0 mb-4 bg-danger bg-opacity-10">
+                                <div className="card-body d-flex align-items-center justify-content-between">
+                                    <div>
+                                        <h6 className="fw-bold text-danger mb-1"><i className="bi bi-trash"></i> Xóa Nhanh Thửa Đất</h6>
+                                        <small className="text-muted">Nhập ID thửa đất để xóa trực tiếp (Hành động này không thể hoàn tác)</small>
+                                    </div>
+                                    <div className="d-flex gap-2">
+                                        <input 
+                                            type="number" 
+                                            className="form-control" 
+                                            placeholder="Nhập ID (VD: 10)" 
+                                            value={quickDeleteId}
+                                            onChange={(e) => setQuickDeleteId(e.target.value)}
+                                            style={{width: '200px'}}
+                                        />
+                                        <button 
+                                            className="btn btn-danger text-nowrap"
+                                            onClick={() => handleDeleteLand(quickDeleteId)}
+                                        >
+                                            Xóa Ngay
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* [GIỮ NGUYÊN] KHU VỰC CẤU HÌNH & IMPORT */}
+                            <div className="row g-4 mb-4">
+                                <div className="col-md-6">
+                                    <div className="card shadow-sm border-0 h-100">
+                                        <div className="card-header bg-primary text-white"><h5 className="mb-0">1. Cập Nhật Bảng Giá Đất</h5></div>
+                                        <div className="card-body">
+                                            <form onSubmit={handleUpdateLandPrice}>
+                                                <div className="row">
+                                                    <div className="col-6 mb-3"><label className="form-label">Khu Vực (ID)</label><input type="number" className="form-control" value={landPrice.maKhuVuc} onChange={(e) => setLandPrice({...landPrice, maKhuVuc: e.target.value})} required /></div>
+                                                    <div className="col-6 mb-3"><label className="form-label">Loại Đất (ID)</label><input type="number" className="form-control" value={landPrice.maLoaiDat} onChange={(e) => setLandPrice({...landPrice, maLoaiDat: e.target.value})} required /></div>
+                                                </div>
+                                                <div className="mb-3"><label className="form-label">Đơn Giá (VNĐ/m²)</label><input type="number" className="form-control" value={landPrice.donGiaM2} onChange={(e) => setLandPrice({...landPrice, donGiaM2: e.target.value})} required /></div>
+                                                <div className="mb-3"><label className="form-label">Số Công Văn Quy Định</label><input type="text" className="form-control" value={landPrice.soCongVanQuyDinh} onChange={(e) => setLandPrice({...landPrice, soCongVanQuyDinh: e.target.value})} placeholder="VD: 123/QD-UBND" required /></div>
+                                                <div className="row mb-3">
+                                                    <div className="col-6"><label className="form-label">Ngày Ban Hành</label><input type="date" className="form-control" value={landPrice.ngayBanHanh} onChange={(e) => setLandPrice({...landPrice, ngayBanHanh: e.target.value})} required /></div>
+                                                    <div className="col-6"><label className="form-label">Ngày Hết Hiệu Lực</label><input type="date" className="form-control" value={landPrice.ngayHetHieuLuc} onChange={(e) => setLandPrice({...landPrice, ngayHetHieuLuc: e.target.value})} /></div>
+                                                </div>
+                                                <button type="submit" className="btn btn-primary w-100">Lưu Cấu Hình</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="col-md-6">
+                                    <div className="card shadow-sm border-0 h-100">
+                                        <div className="card-header bg-success text-white"><h5 className="mb-0">2. Import Dữ Liệu Đất (Excel)</h5></div>
+                                        <div className="card-body">
+                                            <div className="alert alert-info small"><i className="bi bi-info-circle me-2"></i> Hệ thống hỗ trợ file .xlsx</div>
+                                            <form onSubmit={handleImportExcel}>
+                                                <div className="mb-3">
+                                                    <label className="form-label">Chọn File Excel</label>
+                                                    <input type="file" className="form-control" accept=".xlsx, .xls" onChange={(e) => setImportFile(e.target.files[0])} required />
+                                                </div>
+                                                <button type="submit" className="btn btn-success w-100"><i className="bi bi-upload me-2"></i> Tải Lên & Xử Lý</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* [MỚI] MỤC 3: DANH SÁCH THỬA ĐẤT */}
+                            <div className="card shadow-sm border-0">
+                                <div className="card-header bg-white d-flex justify-content-between align-items-center">
+                                    <h5 className="mb-0 text-primary fw-bold"><i className="bi bi-list-ul"></i> 3. Danh Sách Thửa Đất Hiện Có</h5>
+                                    <button className="btn btn-sm btn-outline-primary" onClick={fetchLands}><i className="bi bi-arrow-clockwise"></i> Tải lại</button>
+                                </div>
+                                <div className="table-responsive">
+                                    <table className="table table-hover align-middle mb-0">
+                                        <thead className="bg-light">
+                                            <tr>
+                                                <th>ID</th>
+                                                <th>Số Tờ / Số Thửa</th>
+                                                <th>Diện Tích</th>
+                                                <th>Địa Chỉ</th>
+                                                <th>Chủ Sở Hữu</th>
+                                                <th className="text-end">Hành Động</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {lands.length > 0 ? lands.map(item => (
+                                                <tr key={item.maThuaDat}>
+                                                    <td>#{item.maThuaDat}</td>
+                                                    <td className="fw-bold text-primary">Tờ {item.soTo} / Thửa {item.soThua}</td>
+                                                    <td>{item.dienTich} m²</td>
+                                                    <td>{item.diaChi}</td>
+                                                    <td>{item.maChuSoHuu ? `ID: ${item.maChuSoHuu}` : <span className="text-muted fst-italic">--</span>}</td>
+                                                    <td className="text-end">
+                                                        <button 
+                                                            className="btn btn-sm btn-outline-danger" 
+                                                            title="Xóa thửa đất này"
+                                                            onClick={() => handleDeleteLand(item.maThuaDat)}
+                                                        >
+                                                            <i className="bi bi-trash-fill me-1"></i> Xóa
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            )) : (
+                                                <tr>
+                                                    <td colSpan="6" className="text-center py-4 text-muted">Chưa có dữ liệu thửa đất.</td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* MODAL: TẠO NHÂN VIÊN */}
+            {showCreateStaffModal && (
+                <div className="modal d-block" style={{backgroundColor: 'rgba(0,0,0,0.5)'}}>
+                    <div className="modal-dialog">
+                        <div className="modal-content">
+                            <div className="modal-header">
+                                <h5 className="modal-title">Tạo Tài Khoản Cán Bộ</h5>
+                                <button type="button" className="btn-close" onClick={() => setShowCreateStaffModal(false)}></button>
+                            </div>
+                            <div className="modal-body">
+                                <form id="createStaffForm" onSubmit={handleCreateStaff}>
+                                    <div className="mb-2"><label className="form-label">Họ Tên</label><input type="text" className="form-control" required value={newStaff.hoTen} onChange={(e) => setNewStaff({...newStaff, hoTen: e.target.value})} /></div>
+                                    <div className="mb-2"><label className="form-label">Tên Đăng Nhập</label><input type="text" className="form-control" required value={newStaff.tenDangNhap} onChange={(e) => setNewStaff({...newStaff, tenDangNhap: e.target.value})} /></div>
+                                    <div className="mb-2"><label className="form-label">Số Định Danh (CCCD)</label><input type="text" className="form-control" required value={newStaff.soDinhDanh} onChange={(e) => setNewStaff({...newStaff, soDinhDanh: e.target.value})} /></div>
+                                    <div className="mb-2"><label className="form-label">Mật Khẩu</label><input type="password" className="form-control" required value={newStaff.matKhau} onChange={(e) => setNewStaff({...newStaff, matKhau: e.target.value})} /></div>
+                                    <div className="mb-3">
+                                        <label className="form-label">Vai Trò</label>
+                                        <select className="form-select" value={newStaff.maVaiTro} onChange={(e) => setNewStaff({...newStaff, maVaiTro: e.target.value})}>
+                                            <option value="2">Cán Bộ Thuế (Mã 2)</option>
+                                            <option value="3">QL Đất Đai (Mã 3)</option>
+                                        </select>
+                                    </div>
+                                </form>
+                            </div>
+                            <div className="modal-footer">
+                                <button type="button" className="btn btn-secondary" onClick={() => setShowCreateStaffModal(false)}>Hủy</button>
+                                <button type="submit" form="createStaffForm" className="btn btn-primary">Tạo Mới</button>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 };

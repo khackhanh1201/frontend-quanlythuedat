@@ -4,341 +4,312 @@ import axiosClient from '../api/axiosClient';
 
 const TaxOfficerDashboard = () => {
     const navigate = useNavigate();
-    
-    // Lấy thông tin User đang đăng nhập từ LocalStorage
     const user = JSON.parse(localStorage.getItem('user')) || {};
-
-    // State quản lý Tab
-    const [activeTab, setActiveTab] = useState('stats');
-    const [loading, setLoading] = useState(false);
-    const [message, setMessage] = useState({ text: '', type: '' });
-
-    // --- STATE DỮ LIỆU ---
-    const [stats, setStats] = useState({
-        tongSoHoSo: 0, tongTienThueDuKien: 0,
-        soHoSoChoDuyet: 0, soHoSoDaDuyet: 0,
-        soHoSoBiTuChoi: 0, soHoSoGianLan: 0
-    });
-
+    
+    // --- STATE QUẢN LÝ ---
     const [hoSoList, setHoSoList] = useState([]);
-
-    // --- STATE MODAL ---
-    const [actionData, setActionData] = useState({ id: null, type: null }); 
+    const [loading, setLoading] = useState(false);
+    
+    // State Modal Duyệt/Từ chối
+    const [decisionModal, setDecisionModal] = useState({ 
+        show: false, 
+        id: null, 
+        type: null // 'approve' | 'reject'
+    });
     const [reason, setReason] = useState('');
 
-    // Helper: Format tiền tệ
+    // State Modal Lịch sử
+    const [logModal, setLogModal] = useState({ show: false, logs: [] });
+
+    // Format tiền & ngày
     const formatCurrency = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
+    const formatDate = (dateStr) => dateStr ? new Date(dateStr).toLocaleString('vi-VN') : '---';
 
-    // Helper: Thông báo
-    const showMessage = (text, type = 'success') => {
-        setMessage({ text, type });
-        setTimeout(() => setMessage({ text: '', type: '' }), 3000);
-    };
-
-    // Hàm Đăng xuất
-    const handleLogout = () => {
-        if(window.confirm('Bạn có chắc chắn muốn đăng xuất?')) {
-            localStorage.removeItem('user');
-            navigate('/login');
-        }
-    };
-
-    // --- API CALLS ---
-    const fetchStats = async () => {
-        setLoading(true);
-        try {
-            const res = await axiosClient.get('/thongke/baocao');
-            setStats(res.data);
-        } catch (err) {
-            console.error(err);
-        } finally {
-            setLoading(false);
-        }
-    };
-
+    // ---------------------------------------------
+    // 1. TẢI DANH SÁCH (API 2.2)
+    // Endpoint: /api/hoso/danh-sach
+    // ---------------------------------------------
     const fetchRecords = async () => {
         setLoading(true);
         try {
+            // SỬA: Bỏ /api ở đầu
             const res = await axiosClient.get('/hoso/danh-sach');
             setHoSoList(res.data);
         } catch (err) {
-            showMessage('Lỗi tải danh sách hồ sơ', 'danger');
+            console.error("Lỗi tải danh sách:", err);
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        if (activeTab === 'stats') fetchStats();
-        if (activeTab === 'records') fetchRecords();
-    }, [activeTab]);
+        fetchRecords();
+    }, []);
 
-    // --- XỬ LÝ DUYỆT / TỪ CHỐI ---
+    // ---------------------------------------------
+    // 2. DUYỆT / TỪ CHỐI HỒ SƠ (API 2.4)
+    // Endpoint: /api/hoso/duyet?id=...&dongY=...&lyDo=...
+    // ---------------------------------------------
     const handleSubmitDecision = async () => {
-        if (!actionData.id) return;
-        const isApprove = actionData.type === 'approve';
+        if (!decisionModal.id) return;
+        const isApprove = decisionModal.type === 'approve';
+
+        // Nếu từ chối mà không có lý do -> Bắt buộc nhập
+        if (!isApprove && !reason.trim()) {
+            alert("Vui lòng nhập lý do từ chối!");
+            return;
+        }
 
         try {
+            // SỬA: Bỏ /api ở đầu. Body để null, gửi params qua query string
             await axiosClient.post('/hoso/duyet', null, {
                 params: {
-                    id: actionData.id,
+                    id: decisionModal.id,
                     dongY: isApprove,
                     lyDo: reason
                 }
             });
-            showMessage(`Đã ${isApprove ? 'duyệt' : 'từ chối'} hồ sơ thành công!`);
-            setActionData({ id: null, type: null }); 
+
+            alert(`Đã ${isApprove ? 'duyệt' : 'từ chối'} hồ sơ thành công!`);
+            
+            // Reset và reload
+            setDecisionModal({ show: false, id: null, type: null });
             setReason('');
-            // Load lại dữ liệu để cập nhật UI
-            if (activeTab === 'records') fetchRecords();
-            fetchStats(); 
+            fetchRecords(); 
+
         } catch (err) {
-            showMessage(err.response?.data || 'Có lỗi xảy ra', 'danger');
+            alert(err.response?.data?.error || err.response?.data || "Có lỗi xảy ra khi xử lý.");
         }
     };
 
-    const openModal = (id, type) => {
-        setActionData({ id, type });
-        setReason(type === 'approve' ? 'Hồ sơ đầy đủ, hợp lệ.' : '');
+    // ---------------------------------------------
+    // 3. XUẤT EXCEL (API 2.7)
+    // Endpoint: /api/hoso/xuat-excel
+    // ---------------------------------------------
+    const handleExportExcel = async () => {
+        try {
+            // SỬA: Bỏ /api ở đầu. responseType 'blob' để nhận file
+            const response = await axiosClient.get('/hoso/xuat-excel', {
+                responseType: 'blob',
+            });
+
+            // Tạo link ảo để download
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `baocao_thue_${new Date().getTime()}.xlsx`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (err) {
+            alert("Lỗi xuất file Excel!");
+            console.error(err);
+        }
     };
 
-    // Helper: Render Badge trạng thái
+    // ---------------------------------------------
+    // 4. XEM LỊCH SỬ XỬ LÝ (API 2.6)
+    // Endpoint: /api/hoso/{id}/lich-su-xu-ly
+    // ---------------------------------------------
+    const handleViewLog = async (id) => {
+        try {
+            // SỬA: Bỏ /api ở đầu
+            const res = await axiosClient.get(`/hoso/${id}/lich-su-xu-ly`);
+            setLogModal({ show: true, logs: res.data });
+        } catch (err) {
+            alert("Không tải được lịch sử.");
+        }
+    };
+
+    // Helper render trạng thái (Badge)
     const renderStatus = (status) => {
         const map = {
             'CHO_DUYET': { text: 'Chờ duyệt', cls: 'bg-warning text-dark' },
             'DA_DUYET': { text: 'Đã duyệt', cls: 'bg-success' },
-            'BI_TU_CHOI': { text: 'Từ chối', cls: 'bg-danger' },
-            'GIAN_LAN': { text: 'Gian lận', cls: 'bg-dark' }
+            'DA_NOP_TIEN': { text: 'Hoàn thành', cls: 'bg-primary' },
+            'BI_TU_CHOI': { text: 'Bị từ chối', cls: 'bg-danger' },
+            'CANH_BAO_GIAN_LAN': { text: 'Cảnh báo gian lận', cls: 'bg-dark text-warning border border-warning' }
         };
         const s = map[status] || { text: status, cls: 'bg-secondary' };
-        return <span className={`badge ${s.cls}`}>{s.text}</span>;
+        
+        return (
+            <div className="d-flex align-items-center">
+                <span className={`badge ${s.cls} me-2`}>{s.text}</span>
+                {status === 'CANH_BAO_GIAN_LAN' && <i className="bi bi-exclamation-triangle-fill text-danger animate-blink" title="Cần kiểm tra kỹ!"></i>}
+            </div>
+        );
     };
 
     return (
-        <div className="container-fluid bg-light min-vh-100 py-3">
-            <div className="container">
-                {/* Header: Hiển thị thông tin User & Nút Logout */}
-                <div className="d-flex justify-content-between align-items-center mb-4 bg-white p-3 shadow-sm rounded">
-                    <div>
-                        <h4 className="text-primary fw-bold mb-0 d-flex align-items-center">
-                            <img 
-                                src="https://i.pinimg.com/736x/be/c5/3c/bec53c7b30f46d9ad2cecdb48c5e1e1f.jpg" 
-                                alt="Logo" 
-                                className="me-3 rounded" 
-                                style={{ height: '55px' }} // To hơn một chút cho nổi bật
-                            />
-                            <span>Hệ Thống Quản Lý Thuế - Phân Hệ Cán Bộ</span>
-                        </h4>
-                    </div>
-                    <div className="d-flex align-items-center gap-3">
-                        <div className="text-end">
-                            <div className="fw-bold">{user.hoTen || 'Cán bộ'}</div>
-                            <small className="text-muted">ID: {user.tenDangNhap}</small>
-                        </div>
-                        <button className="btn btn-outline-danger btn-sm" onClick={handleLogout}>
-                            <i className="bi bi-box-arrow-right me-1"></i> Đăng xuất
+        <div className="min-vh-100 bg-light">
+            {/* Header */}
+            <div className="bg-white shadow-sm p-3 mb-4 border-bottom">
+                <div className="container d-flex justify-content-between align-items-center">
+                    <h4 className="text-primary mb-0 d-flex align-items-center">
+                        <i className="bi bi-person-badge-fill me-2 fs-3"></i>
+                        Hệ Thống Thuế - Phân Hệ Cán Bộ
+                    </h4>
+                    <div className="d-flex align-items-center">
+                        <span className="me-3 fw-bold text-dark">CB: {user.hoTen}</span>
+                        <button className="btn btn-sm btn-outline-danger" onClick={() => {localStorage.removeItem('user'); navigate('/login');}}>
+                            <i className="bi bi-box-arrow-right"></i> Đăng xuất
                         </button>
                     </div>
                 </div>
-
-                {/* Tabs & Navigation */}
-                <div className="mb-4">
-                    <div className="btn-group shadow-sm">
-                        <button 
-                            className={`btn ${activeTab === 'stats' ? 'btn-primary' : 'btn-white bg-white text-dark'}`}
-                            onClick={() => setActiveTab('stats')}
-                        >
-                            <i className="bi bi-graph-up me-2"></i> Tổng Quan Thống Kê
-                        </button>
-                        <button 
-                            className={`btn ${activeTab === 'records' ? 'btn-primary' : 'btn-white bg-white text-dark'}`}
-                            onClick={() => setActiveTab('records')}
-                        >
-                            <i className="bi bi-list-task me-2"></i> Danh Sách Hồ Sơ
-                        </button>
-                    </div>
-                </div>
-
-                {/* Thông báo */}
-                {message.text && (
-                    <div className={`alert alert-${message.type} shadow-sm alert-dismissible fade show`}>
-                        {message.text}
-                    </div>
-                )}
-
-                {/* --- TAB 1: THỐNG KÊ (STATS) --- */}
-                {activeTab === 'stats' && (
-                    <div className="row g-3 fade-in">
-                        <div className="col-md-3">
-                            <div className="card text-white bg-primary h-100 shadow-sm border-0">
-                                <div className="card-body">
-                                    <div className="d-flex justify-content-between">
-                                        <div>
-                                            <h6 className="card-title opacity-75 text-uppercase">Tổng Hồ Sơ</h6>
-                                            <h2 className="fw-bold mb-0">{stats.tongSoHoSo}</h2>
-                                        </div>
-                                        <i className="bi bi-folder2-open fs-1 opacity-50"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="col-md-3">
-                            <div className="card text-white bg-success h-100 shadow-sm border-0">
-                                <div className="card-body">
-                                    <div className="d-flex justify-content-between">
-                                        <div>
-                                            <h6 className="card-title opacity-75 text-uppercase">Thuế Dự Kiến</h6>
-                                            <h4 className="fw-bold mb-0">{formatCurrency(stats.tongTienThueDuKien)}</h4>
-                                        </div>
-                                        <i className="bi bi-cash-stack fs-1 opacity-50"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="col-md-3">
-                            <div className="card text-dark bg-warning h-100 shadow-sm border-0" style={{backgroundColor: '#ffc107'}}>
-                                <div className="card-body">
-                                    <div className="d-flex justify-content-between">
-                                        <div>
-                                            <h6 className="card-title opacity-75 text-uppercase">Chờ Duyệt</h6>
-                                            <h2 className="fw-bold mb-0">{stats.soHoSoChoDuyet}</h2>
-                                        </div>
-                                        <i className="bi bi-hourglass-split fs-1 opacity-50"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="col-md-3">
-                            <div className="card text-white bg-danger h-100 shadow-sm border-0">
-                                <div className="card-body">
-                                    <div className="d-flex justify-content-between">
-                                        <div>
-                                            <h6 className="card-title opacity-75 text-uppercase">Từ chối / Gian lận</h6>
-                                            <h2 className="fw-bold mb-0">{stats.soHoSoGianLan + stats.soHoSoBiTuChoi}</h2>
-                                        </div>
-                                        <i className="bi bi-exclamation-triangle fs-1 opacity-50"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* --- TAB 2: DANH SÁCH HỒ SƠ --- */}
-                {activeTab === 'records' && (
-                    <div className="card shadow-sm border-0 fade-in">
-                        <div className="card-header bg-white py-3">
-                            <h5 className="mb-0 text-secondary">Danh sách hồ sơ khai thuế cần xử lý</h5>
-                        </div>
-                        <div className="card-body p-0">
-                            {loading ? (
-                                <div className="text-center py-5"><div className="spinner-border text-primary"></div></div>
-                            ) : (
-                                <div className="table-responsive">
-                                    <table className="table table-hover align-middle mb-0">
-                                        <thead className="bg-light text-secondary">
-                                            <tr>
-                                                <th className="ps-3">Mã HS</th>
-                                                <th>Người Nộp / CCCD</th>
-                                                <th>Thông Tin Đất</th>
-                                                <th>Thuế (VNĐ)</th>
-                                                <th>Trạng Thái</th>
-                                                <th className="text-end pe-4">Hành Động</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {hoSoList.length > 0 ? hoSoList.map(item => (
-                                                <tr key={item.id}>
-                                                    <td className="ps-3 fw-bold text-primary">#{item.id}</td>
-                                                    <td>
-                                                        <div className="fw-bold">{item.nguoiNop?.hoTen || 'N/A'}</div>
-                                                        <small className="text-muted"><i className="bi bi-person-vcard"></i> {item.cccd}</small>
-                                                    </td>
-                                                    <td>
-                                                        <div><span className="badge bg-light text-dark border">{item.loaiDat}</span></div>
-                                                        <small className="text-muted">Diện tích: {item.dienTich} m²</small>
-                                                    </td>
-                                                    <td className="fw-bold text-success">
-                                                        {formatCurrency(item.tongTienThue)}
-                                                    </td>
-                                                    <td>{renderStatus(item.trangThai)}</td>
-                                                    <td className="text-end pe-4">
-                                                        {item.trangThai === 'CHO_DUYET' ? (
-                                                            <div className="btn-group" role="group">
-                                                                <button 
-                                                                    className="btn btn-sm btn-success"
-                                                                    onClick={() => openModal(item.id, 'approve')}
-                                                                    data-bs-toggle="modal" data-bs-target="#decisionModal"
-                                                                    title="Chấp thuận hồ sơ"
-                                                                >
-                                                                    <i className="bi bi-check-lg"></i> Duyệt
-                                                                </button>
-                                                                <button 
-                                                                    className="btn btn-sm btn-danger"
-                                                                    onClick={() => openModal(item.id, 'reject')}
-                                                                    data-bs-toggle="modal" data-bs-target="#decisionModal"
-                                                                    title="Từ chối hồ sơ"
-                                                                >
-                                                                    <i className="bi bi-x-lg"></i> Từ chối
-                                                                </button>
-                                                            </div>
-                                                        ) : (
-                                                            <span className="text-muted fst-italic small">Đã hoàn tất</span>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            )) : (
-                                                <tr><td colSpan="6" className="text-center py-5 text-muted">Không có dữ liệu hiển thị.</td></tr>
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )}
             </div>
 
-            {/* --- MODAL XỬ LÝ --- */}
-            <div className="modal fade" id="decisionModal" tabIndex="-1" aria-hidden="true" data-bs-backdrop="static">
-                <div className="modal-dialog modal-dialog-centered">
-                    <div className="modal-content">
-                        <div className={`modal-header text-white ${actionData.type === 'approve' ? 'bg-success' : 'bg-danger'}`}>
-                            <h5 className="modal-title">
-                                {actionData.type === 'approve' ? <><i className="bi bi-check-circle"></i> XÁC NHẬN DUYỆT</> : <><i className="bi bi-exclamation-circle"></i> XÁC NHẬN TỪ CHỐI</>}
-                            </h5>
-                            <button type="button" className="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div className="modal-body">
-                            <p>Bạn đang thao tác với hồ sơ mã số: <strong>#{actionData.id}</strong></p>
-                            <div className="mb-3">
-                                <label className="form-label fw-bold">
-                                    {actionData.type === 'approve' ? 'Ghi chú phê duyệt (Tùy chọn):' : 'Lý do từ chối (Bắt buộc):'}
-                                </label>
-                                <textarea 
-                                    className="form-control" 
-                                    rows="3" 
-                                    value={reason}
-                                    onChange={(e) => setReason(e.target.value)}
-                                    placeholder={actionData.type === 'approve' ? "Nhập ghi chú..." : "VD: Sai thông tin diện tích, thiếu giấy tờ..."}
+            <div className="container">
+                {/* Toolbar */}
+                <div className="d-flex justify-content-between align-items-center mb-3">
+                    <h5 className="text-secondary mb-0 fw-bold">Danh sách hồ sơ chờ xử lý</h5>
+                    <div className="d-flex gap-2">
+                        <button className="btn btn-success shadow-sm" onClick={handleExportExcel}>
+                            <i className="bi bi-file-earmark-excel me-2"></i> Xuất Excel
+                        </button>
+                        <button className="btn btn-primary shadow-sm" onClick={fetchRecords} disabled={loading}>
+                            <i className={`bi bi-arrow-clockwise me-2 ${loading ? 'spin' : ''}`}></i> 
+                            {loading ? 'Đang tải...' : 'Làm mới'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Main Table */}
+                <div className="card shadow-sm border-0">
+                    <div className="table-responsive">
+                        <table className="table table-hover align-middle mb-0">
+                            <thead className="bg-light text-secondary">
+                                <tr>
+                                    <th className="ps-3">ID</th>
+                                    <th>Người Nộp / CCCD</th>
+                                    <th>Thông Tin Đất</th>
+                                    <th>Thuế Dự Kiến</th>
+                                    <th>Trạng Thái</th>
+                                    <th className="text-end pe-4">Thao Tác</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {hoSoList.length > 0 ? hoSoList.map(item => (
+                                    <tr key={item.maHoSo || item.id} className={item.trangThai === 'CANH_BAO_GIAN_LAN' ? 'table-warning' : ''}>
+                                        <td className="ps-3 fw-bold">#{item.maHoSo || item.id}</td>
+                                        <td>
+                                            {/* Note: Backend cần trả về object nguoiNop hoặc map fields tương ứng */}
+                                            <div className="fw-bold">{item.maNguoiKhai} (Mã User)</div>
+                                        </td>
+                                        <td>
+                                            <div className="small">Mã Đất: <strong>{item.maThuaDat}</strong></div>
+                                            <div className="small">DT Khai báo: <strong>{item.dienTichKhaiBao} m²</strong></div>
+                                            <div className="badge bg-light text-dark border">{item.mucDichSuDungKhaiBao}</div>
+                                        </td>
+                                        <td className="fw-bold text-success">
+                                            {item.soTienPhaiNop ? formatCurrency(item.soTienPhaiNop) : '---'}
+                                        </td>
+                                        <td>
+                                            {renderStatus(item.trangThai)}
+                                            {item.ghiChuCanBo && <div className="text-muted small fst-italic mt-1" style={{fontSize: '0.75rem', maxWidth: '150px'}}>{item.ghiChuCanBo}</div>}
+                                        </td>
+                                        <td className="text-end pe-4">
+                                            <button className="btn btn-sm btn-outline-secondary me-2" title="Xem lịch sử" onClick={() => handleViewLog(item.maHoSo || item.id)}>
+                                                <i className="bi bi-clock-history"></i>
+                                            </button>
+
+                                            {/* Chỉ hiển thị nút Duyệt/Từ chối nếu trạng thái là CHO_DUYET hoặc CANH_BAO_GIAN_LAN */}
+                                            {['CHO_DUYET', 'CANH_BAO_GIAN_LAN'].includes(item.trangThai) ? (
+                                                <>
+                                                    <button className="btn btn-sm btn-success me-1" title="Duyệt"
+                                                        onClick={() => {
+                                                            setDecisionModal({ show: true, id: item.maHoSo || item.id, type: 'approve' });
+                                                            setReason('Hồ sơ hợp lệ, đủ điều kiện đóng thuế.');
+                                                        }}>
+                                                        <i className="bi bi-check-lg"></i>
+                                                    </button>
+                                                    <button className="btn btn-sm btn-danger" title="Từ chối"
+                                                        onClick={() => {
+                                                            setDecisionModal({ show: true, id: item.maHoSo || item.id, type: 'reject' });
+                                                            setReason('');
+                                                        }}>
+                                                        <i className="bi bi-x-lg"></i>
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <span className="text-muted small fst-italic"><i className="bi bi-lock-fill"></i> Đã xử lý</span>
+                                            )}
+                                        </td>
+                                    </tr>
+                                )) : (
+                                    <tr><td colSpan="6" className="text-center py-5 text-muted">Không có hồ sơ nào.</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            {/* MODAL: DUYỆT / TỪ CHỐI */}
+            {decisionModal.show && (
+                <div className="modal d-block" style={{backgroundColor: 'rgba(0,0,0,0.5)'}}>
+                    <div className="modal-dialog modal-dialog-centered">
+                        <div className="modal-content">
+                            <div className={`modal-header text-white ${decisionModal.type === 'approve' ? 'bg-success' : 'bg-danger'}`}>
+                                <h5 className="modal-title">
+                                    {decisionModal.type === 'approve' ? 'Xác Nhận Duyệt Hồ Sơ' : 'Xác Nhận Từ Chối Hồ Sơ'}
+                                </h5>
+                                <button type="button" className="btn-close btn-close-white" onClick={() => setDecisionModal({ show: false, id: null, type: null })}></button>
+                            </div>
+                            <div className="modal-body">
+                                <p>Đang xử lý hồ sơ ID: <strong>#{decisionModal.id}</strong></p>
+                                <label className="form-label fw-bold">Ghi chú cán bộ (Lý do):</label>
+                                <textarea className="form-control" rows="4" 
+                                    placeholder={decisionModal.type === 'approve' ? "Nhập ghi chú (không bắt buộc)..." : "Nhập lý do từ chối (Bắt buộc)..."}
+                                    value={reason} onChange={(e) => setReason(e.target.value)}
                                 ></textarea>
                             </div>
-                        </div>
-                        <div className="modal-footer bg-light">
-                            <button type="button" className="btn btn-secondary" data-bs-dismiss="modal">Hủy bỏ</button>
-                            <button 
-                                type="button" 
-                                className={`btn ${actionData.type === 'approve' ? 'btn-success' : 'btn-danger'}`}
-                                onClick={handleSubmitDecision}
-                                data-bs-dismiss="modal"
-                                disabled={actionData.type === 'reject' && !reason.trim()} // Bắt buộc nhập lý do nếu từ chối
-                            >
-                                Xác nhận {actionData.type === 'approve' ? 'Duyệt' : 'Từ chối'}
-                            </button>
+                            <div className="modal-footer">
+                                <button type="button" className="btn btn-secondary" onClick={() => setDecisionModal({ show: false, id: null, type: null })}>Hủy bỏ</button>
+                                <button type="button" className={`btn ${decisionModal.type === 'approve' ? 'btn-success' : 'btn-danger'}`} onClick={handleSubmitDecision}>
+                                    {decisionModal.type === 'approve' ? 'Xác Nhận Duyệt' : 'Xác Nhận Từ Chối'}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            )}
+
+            {/* MODAL: LỊCH SỬ LOG */}
+            {logModal.show && (
+                <div className="modal d-block" style={{backgroundColor: 'rgba(0,0,0,0.5)'}}>
+                    <div className="modal-dialog modal-dialog-centered modal-lg">
+                        <div className="modal-content">
+                            <div className="modal-header">
+                                <h5 className="modal-title">Nhật Ký Xử Lý Hồ Sơ</h5>
+                                <button type="button" className="btn-close" onClick={() => setLogModal({ show: false, logs: [] })}></button>
+                            </div>
+                            <div className="modal-body bg-light" style={{maxHeight: '60vh', overflowY: 'auto'}}>
+                                {logModal.logs.length > 0 ? (
+                                    <div className="timeline">
+                                        {logModal.logs.map((log, idx) => (
+                                            <div key={idx} className="card mb-2 border-0 shadow-sm">
+                                                <div className="card-body py-2">
+                                                    <div className="d-flex justify-content-between">
+                                                        <strong className="text-primary">{log.trangThaiDen}</strong>
+                                                        <small className="text-muted">{formatDate(log.thoiGianXuLy)}</small>
+                                                    </div>
+                                                    <p className="mb-0 small">{log.ghiChu}</p>
+                                                    <small className="text-muted fst-italic">Người xử lý ID: {log.maCanBo}</small>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center text-muted py-4">Chưa có lịch sử ghi nhận.</div>
+                                )}
+                            </div>
+                            <div className="modal-footer">
+                                <button type="button" className="btn btn-secondary" onClick={() => setLogModal({ show: false, logs: [] })}>Đóng</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
